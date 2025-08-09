@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>REPROMT — Prompt Reconstructor for Websim Projects</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "marked": "https://cdn.jsdelivr.net/npm/marked@12.0.2/lib/marked.esm.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand">
+        <span class="logo">🧠➡️🖊️</span>
+        <h1>REPROMT</h1>
+      </div>
+      <div class="subtitle">Search your projects (or those you follow), collect prompt history, and synthesize the most detailed recreation prompt.</div>
+    </header>
+
+    <main class="layout">
+      <section class="controls">
+        <div class="control-row">
+          <div class="segmented" role="tablist" aria-label="Scope">
+            <button id="scope-my" data-scope="my" class="segmented-btn active" role="tab" aria-selected="true">My projects</button>
+            <button id="scope-following" data-scope="following" class="segmented-btn" role="tab" aria-selected="false">Following</button>
+            <button id="scope-all" data-scope="all" class="segmented-btn" role="tab" aria-selected="false">All public</button>
+          </div>
+
+          <div class="search">
+            <input id="search-input" type="search" placeholder="Search by project title, description, or keywords…" />
+            <button id="search-btn" class="primary">Search</button>
+          </div>
+        </div>
+
+        <div class="filters">
+          <label title="Only projects with posted revisions">
+            <input id="filter-posted" type="checkbox" checked />
+            Posted only
+          </label>
+          <label title="Include prompt text from each revision">
+            <input id="filter-include-prompts" type="checkbox" checked />
+            Include prompt history
+          </label>
+          <label title="Include asset filenames and media hints">
+            <input id="filter-include-assets" type="checkbox" />
+            Include asset hints
+          </label>
+          <label title="Max revisions scanned per project">
+            Revisions:
+            <select id="filter-revision-limit">
+              <option value="5">5</option>
+              <option value="10" selected>10</option>
+              <option value="20">20</option>
+              <option value="50">50</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section class="content">
+        <aside class="results-pane">
+          <div class="results-header">
+            <h2>Results</h2>
+            <div id="results-count" class="muted">—</div>
+          </div>
+          <div id="results" class="results"></div>
+          <div class="pagination">
+            <button id="prev-page" disabled>Previous</button>
+            <div id="page-indicator" class="muted">Page 1</div>
+            <button id="next-page" disabled>Next</button>
+          </div>
+        </aside>
+
+        <section class="detail-pane">
+          <div id="project-detail" class="project-detail empty-state">
+            <div class="empty-illustration">🔎</div>
+            <div class="empty-text">
+              Select a project to inspect its revisions and prompt history.
+            </div>
+          </div>
+
+          <div class="ai-pane">
+            <div class="ai-header">
+              <h2>AI Prompt Reconstructor</h2>
+              <div class="muted">Synthesizes a single hyper-detailed prompt from all collected metadata.</div>
+            </div>
+
+            <div class="ai-options">
+              <label title="Target medium for the reconstructed prompt">
+                Target:
+                <select id="ai-target">
+                  <option value="webapp" selected>Interactive Web Experience</option>
+                  <option value="game">Game / Playable</option>
+                  <option value="image">Image</option>
+                  <option value="audio">Audio / SFX</option>
+                  <option value="video">Video</option>
+                  <option value="3d">3D Scene</option>
+                </select>
+              </label>
+              <label title="Verbosity level of the generated prompt">
+                Verbosity:
+                <select id="ai-verbosity">
+                  <option value="concise">Concise</option>
+                  <option value="balanced" selected>Balanced</option>
+                  <option value="maximal">Maximal</option>
+                </select>
+              </label>
+              <label title="Optional: ask the AI to include acceptance criteria / test plan">
+                <input id="ai-include-acceptance" type="checkbox" />
+                Include acceptance criteria
+              </label>
+              <label title="Optional: generate a preview image if the target suits it">
+                <input id="ai-generate-preview" type="checkbox" />
+                Generate preview image
+              </label>
+            </div>
+
+            <div class="ai-actions">
+              <button id="ai-generate" class="primary" disabled>Generate Reprompt</button>
+              <button id="ai-copy" disabled>Copy</button>
+            </div>
+
+            <div id="ai-output-container" class="ai-output-container">
+              <textarea id="ai-output" readonly placeholder="The reconstructed prompt will appear here…"></textarea>
+            </div>
+
+            <div id="preview-container" class="preview hidden">
+              <div class="preview-header">
+                <h3>Preview</h3>
+                <div id="preview-status" class="muted">—</div>
+              </div>
+              <div id="preview-content" class="preview-content"></div>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <div>Tip: Click a project to inspect its full prompt ancestry. REPROMT will merge the intent into a single, production-ready prompt.</div>
+    </footer>
+
+    <template id="result-card-tpl">
+      <article class="result-card">
+        <div class="thumb"><img alt="" /></div>
+        <div class="meta">
+          <h3 class="title"></h3>
+          <div class="byline"></div>
+          <div class="stats muted"></div>
+        </div>
+      </article>
+    </template>
+
+    <template id="rev-row-tpl">
+      <div class="rev-row">
+        <div class="rev-left">
+          <div class="rev-badge"></div>
+          <div class="rev-meta">
+            <div class="rev-head"></div>
+            <div class="rev-sub muted"></div>
+          </div>
+        </div>
+        <button class="toggle">Show prompt</button>
+      </div>
+    </template>
+
+    <script type="module" src="./app.js"></script>
+  <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>
+
