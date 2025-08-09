@@ -16,6 +16,13 @@ const state = {
   total: null,
   selected: null,
   collectedContext: null,
+  // Cursor-based pagination state (per scope)
+  pagesMeta: {
+    my: {},
+    following: {},
+    all: {},
+  },
+  lastMeta: null,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -53,18 +60,22 @@ async function init() {
       btn.classList.add('active');
       state.scope = btn.dataset.scope;
       state.page = 1;
-      search();
+      // reset cursor cache when scope changes
+      state.pagesMeta[state.scope] = {};
+      search(true);
     });
   });
 
   // Filters
   $('#filter-posted').addEventListener('change', (e) => {
     state.postedOnly = e.target.checked;
-    state.page = 1; search();
+    state.page = 1;
+    state.pagesMeta[state.scope] = {};
+    search(true);
   });
   $('#filter-include-prompts').addEventListener('change', (e) => {
     state.includePrompts = e.target.checked;
-    // doesn't affect results, only reconstruction; no auto-search needed
+    // doesn't affect result list; only reconstruction
   });
   $('#filter-include-assets').addEventListener('change', (e) => {
     state.includeAssets = e.target.checked;
@@ -77,7 +88,8 @@ async function init() {
   const onSearch = () => {
     state.query = $('#search-input').value.trim();
     state.page = 1;
-    search();
+    state.pagesMeta[state.scope] = {};
+    search(true);
   };
   $('#search-btn').addEventListener('click', onSearch);
   $('#search-input').addEventListener('keydown', (e) => {
@@ -156,75 +168,79 @@ async function init() {
     $$('.segmented-btn').forEach((b) => b.classList.remove('active'));
     document.getElementById('scope-all').classList.add('active');
   }
-  search();
+  state.pagesMeta[state.scope] = {};
+  search(true);
 }
 
-async function search() {
+async function search(reset = false) {
   renderResults([], true);
-  const offset = (state.page - 1) * state.pageSize;
   try {
     let body;
-    if (state.scope === 'my' && state.user) {
-      // GET /users/{user}/projects
-      const params = new URLSearchParams();
-      params.set('first', state.pageSize.toString());
-      params.set('after', ''); // cursor pagination not trivial; use limit/offset approach by slicing client-side
-      if (state.postedOnly) params.set('posted', 'true');
-      if (state.query) params.set('query', state.query);
-      const res = await fetch(`/api/v1/users/${encodeURIComponent(state.user.username)}/projects?sort_by=updated_at&${params.toString()}`);
-      body = await res.json();
-      // Convert cursor list to offset list client-side
-      let items = body.projects?.data || [];
-      if (state.query) {
-        // items already filtered by server, still sort by updated
-      }
-      const slice = items.slice(offset, offset + state.pageSize);
-      state.results = slice;
-      state.total = items.length; // approximate
-      updatePager(items.length);
-    } else if (state.scope === 'following' && state.user) {
-      // GET /users/{user}/following/projects
-      const params = new URLSearchParams();
-      params.set('limit', state.pageSize.toString());
-      params.set('offset', offset.toString());
-      if (state.postedOnly) params.set('posted', 'true');
-      if (state.query) params.set('query', state.query);
-      const res = await fetch(`/api/v1/users/${encodeURIComponent(state.user.username)}/following/projects?sort_by=updated_at&${params.toString()}`);
-      body = await res.json();
-      state.results = body.projects?.data || [];
-      state.total = (body.projects?.meta?.count ?? null);
-      updatePager(state.results.length, body.projects?.meta);
+    let path = '';
+    const params = new URLSearchParams();
+
+    // Use cursor-based pagination consistently
+    params.set('first', state.pageSize.toString());
+    params.set('sort_by', 'updated_at');
+    if (state.postedOnly) params.set('posted', 'true');
+    if (state.query) params.set('query', state.query);
+
+    // Determine cursor for current page (after = end_cursor of previous page)
+    const scopeKey = state.scope;
+    const prevMeta = state.pagesMeta[scopeKey][state.page - 1] || null;
+    if (state.page > 1 && prevMeta?.end_cursor) {
+      params.set('after', prevMeta.end_cursor);
     } else {
-      // GET /projects (public)
-      const params = new URLSearchParams();
-      params.set('limit', state.pageSize.toString());
-      params.set('offset', offset.toString());
-      params.set('sort_by', 'updated_at');
-      if (state.postedOnly) params.set('posted', 'true');
-      if (state.query) params.set('query', state.query);
-      const res = await fetch(`/api/v1/projects?${params.toString()}`);
-      body = await res.json();
-      state.results = body.projects?.data || [];
-      state.total = (body.projects?.meta?.count ?? null);
-      updatePager(state.results.length, body.projects?.meta);
+      params.delete('after');
     }
 
-    renderResults(state.results);
+    if (state.scope === 'my' && state.user) {
+      path = `/api/v1/users/${encodeURIComponent(state.user.username)}/projects`;
+    } else if (state.scope === 'following' && state.user) {
+      path = `/api/v1/users/${encodeURIComponent(state.user.username)}/following/projects`;
+    } else {
+      path = `/api/v1/projects`;
+    }
+
+    const res = await fetch(`${path}?${params.toString()}`);
+    body = await res.json();
+
+    const collection = body.projects || body.projects?.data ? body.projects : body.projects ?? body; // compatibility
+    // For /users/{user}/projects and /projects responses:
+    const data = (collection.projects?.data) || (collection.data) || (body.projects?.data) || (body.data) || [];
+    const meta = (collection.projects?.meta) || (collection.meta) || (body.projects?.meta) || (body.meta) || null;
+
+    // Normalize items shape to array of {project, site}
+    const items = data.map((row) => {
+      // row may be {cursor, project, site, ...}
+      return {
+        project: row.project || row.project_revision?.project || row.project || row?.project, // fallback
+        site: row.site || null,
+      };
+    });
+
+    state.results = data; // keep original rows for downstream uses
+    state.lastMeta = meta || null;
+    // cache meta for current page to enable "Next" navigation
+    state.pagesMeta[scopeKey][state.page] = state.lastMeta;
+
+    updatePager(state.lastMeta);
+    renderResults(items);
   } catch (e) {
     renderResults([], false, e.message || String(e));
   }
 }
 
-function updatePager(length, meta) {
+function updatePager(meta) {
   const page = state.page;
-  const size = state.pageSize;
   $pageIndicator.textContent = `Page ${page}`;
-  if (meta?.has_next_page !== undefined) {
+  if (meta && typeof meta.has_next_page === 'boolean') {
     $prev.disabled = page <= 1;
     $next.disabled = !meta.has_next_page;
   } else {
+    // Fallback if meta missing
     $prev.disabled = page <= 1;
-    $next.disabled = length < size; // naive
+    $next.disabled = false;
   }
 }
 
@@ -241,7 +257,10 @@ function renderResults(items, loading = false, error = null) {
     return;
   }
 
-  for (const { project, site } of items) {
+  for (const row of items) {
+    const project = row.project;
+    const site = row.site;
+
     const tpl = document.getElementById('result-card-tpl').content.cloneNode(true);
     const card = tpl.querySelector('.result-card');
     const img = tpl.querySelector('img');
@@ -403,4 +422,3 @@ async function collectProjectContext(projectId) {
 }
 
 window.addEventListener('DOMContentLoaded', init);
-
